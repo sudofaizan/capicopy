@@ -1,0 +1,28 @@
+[Unit]
+Description=AlphaFX MT5 pending orders → Capiffy mirror
+Documentation=file:///opt/capiffy-bridge/README-EC2.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=capiffy
+Group=capiffy
+WorkingDirectory=/opt/capiffy-bridge
+EnvironmentFile=-/opt/capiffy-bridge/.env
+Environment=CAPIFFY_SSL_VERIFY=false
+Environment=MIRROR_POLL_SEC=5
+Environment=TOKEN_REFRESH_SEC=600
+ExecStart=/usr/bin/python3 /opt/capiffy-bridge/automator.py
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=capiffy-mirror
+
+# Hardening (optional; comment out if issues)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
