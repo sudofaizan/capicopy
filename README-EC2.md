@@ -71,7 +71,9 @@ Add to `/opt/capiffy-bridge/.env`:
 TELEGRAM_ENV_FILE=/home/ec2-user/telegram.env
 ```
 
-Bot must be **admin** on the channel. Alerts: place, modify (price/SL/TP/vol), remove.
+Bot must be **admin** on the channel. Alerts: place, modify (price/SL/TP/vol), remove, **position SL/TP** when trade is open.
+
+**Open positions** (`MIRROR_POSITIONS=true`, default): when a limit fills on MT5, the mirror links to the Capiffy **position** and syncs **SL/TP** changes (no cancel on fill).
 
 Optional:
 

@@ -60,6 +60,30 @@ def get_open_orders(account_id: str | None = None) -> list[dict[str, Any]]:
     return snap.get("data", {}).get("orders") or []
 
 
+def get_open_positions(account_id: str | None = None) -> list[dict[str, Any]]:
+    snap = get_snapshot(account_id)
+    return snap.get("data", {}).get("positions") or []
+
+
+def modify_position(
+    position_id: str,
+    *,
+    stop_loss: float | None = None,
+    take_profit: float | None = None,
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """PATCH /api/trade/position/{positionId} — SL/TP on open trade."""
+    _ = account_id
+    body: dict[str, Any] = {}
+    if stop_loss is not None:
+        body["stopLoss"] = stop_loss
+    if take_profit is not None:
+        body["takeProfit"] = take_profit
+    if not body:
+        raise ValueError("stop_loss or take_profit required")
+    return _request("PATCH", f"/api/trade/position/{position_id}", body)
+
+
 def cancel_order(order_id: str, account_id: str | None = None) -> dict[str, Any]:
     """DELETE /api/trade/order/{orderId}"""
     _ = account_id  # account scoped by auth token

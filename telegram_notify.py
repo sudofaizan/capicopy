@@ -148,3 +148,35 @@ def notify_removed(cap_id: str, mt5_ticket: str, reason: str = "MT5 order remove
         f"MT5 #{mt5_ticket}\n"
         f"{reason}"
     )
+
+
+def notify_position_modify(
+    cap_id: str,
+    mt5_ticket: str,
+    cap_sym: str,
+    side: str,
+    old_fp: list[Any],
+    new_fp: list[Any],
+) -> None:
+    labels = ["SL", "TP"]
+    changes: list[str] = []
+    for i, label in enumerate(labels):
+        if i < len(old_fp) and i < len(new_fp) and old_fp[i] != new_fp[i]:
+            changes.append(f"{label}: {old_fp[i]} → {new_fp[i]}")
+    change_txt = "\n".join(changes) if changes else "position updated"
+    send_telegram(
+        "📍 Capiffy POSITION SL/TP\n"
+        f"Capiffy {cap_id}\n"
+        f"MT5 position #{mt5_ticket}\n"
+        f"{side} {cap_sym}\n"
+        f"{change_txt}"
+    )
+
+
+def notify_position_linked(cap_id: str, mt5_ticket: str, from_order_ticket: str) -> None:
+    send_telegram(
+        "🔗 Order → Position\n"
+        f"MT5 pending #{from_order_ticket} filled\n"
+        f"MT5 position #{mt5_ticket}\n"
+        f"Capiffy position {cap_id}"
+    )

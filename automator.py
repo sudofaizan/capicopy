@@ -27,11 +27,19 @@ from capiffy_client import (
     cancel_order,
     extract_order_id,
     get_open_orders,
+    get_open_positions,
     modify_order,
+    modify_position,
     place_order,
 )
-from mt5_client import get_orders
-from telegram_notify import notify_modify, notify_place, notify_removed
+from mt5_client import get_orders, get_positions
+from telegram_notify import (
+    notify_modify,
+    notify_place,
+    notify_position_linked,
+    notify_position_modify,
+    notify_removed,
+)
 
 ROOT = Path(__file__).resolve().parent
 STATE_FILE = ROOT / "mirror_state.json"
@@ -52,6 +60,10 @@ def _env_magic() -> int | None:
     if not raw:
         return None
     return int(raw)
+
+
+def _mirror_positions() -> bool:
+    return os.environ.get("MIRROR_POSITIONS", "true").lower() not in ("0", "false", "no")
 
 
 def _symbol_map() -> dict[str, str]:
@@ -119,6 +131,14 @@ def order_fingerprint(order: dict[str, Any]) -> list[Any]:
     ]
 
 
+def position_fingerprint(pos: dict[str, Any]) -> list[Any]:
+    return [_fp_value(pos.get("sl")), _fp_value(pos.get("tp"))]
+
+
+def mt5_position_side(pos: dict[str, Any]) -> str:
+    return "BUY" if str(pos.get("type", "")).lower() == "buy" else "SELL"
+
+
 def load_state() -> dict[str, Any]:
     if not STATE_FILE.is_file():
         return {"orders": {}}
@@ -126,10 +146,12 @@ def load_state() -> dict[str, Any]:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         if "orders" not in data:
             data["orders"] = {}
+        if "positions" not in data:
+            data["positions"] = {}
         return data
     except Exception as exc:
         _log.warning("Could not read %s: %s — starting fresh", STATE_FILE.name, exc)
-        return {"orders": {}}
+        return {"orders": {}, "positions": {}}
 
 
 def save_state(state: dict[str, Any]) -> None:
@@ -182,6 +204,50 @@ def find_matching_capiffy_orders(
     return [co for co in cap_orders if cap_matches_mt5(co, mt5_o)]
 
 
+def cap_position_matches_mt5(mt5_p: dict[str, Any], cap_p: dict[str, Any]) -> bool:
+    cap_sym = normalize_symbol(mt5_p.get("symbol", ""))
+    if not cap_sym:
+        return False
+    cap_side = str(cap_p.get("side") or "").upper()
+    sym = str(cap_p.get("symbol") or cap_p.get("symbolTicker") or "").upper()
+    if sym != cap_sym or cap_side != mt5_position_side(mt5_p):
+        return False
+    return _fp_value(cap_p.get("volume")) == _fp_value(mt5_p.get("volume"))
+
+
+def find_cap_position_for_mt5(
+    mt5_p: dict[str, Any],
+    cap_positions: list[dict[str, Any]],
+    exclude_ids: set[str],
+) -> dict[str, Any] | None:
+    for cp in cap_positions:
+        cid = str(cp.get("id") or "")
+        if not cid or cid in exclude_ids:
+            continue
+        if cap_position_matches_mt5(mt5_p, cp):
+            return cp
+    return None
+
+
+def mt5_pending_became_position(
+    entry: dict[str, Any], mt5_positions: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    sym = entry.get("cap_sym") or normalize_symbol(str(entry.get("symbol", "")))
+    side = str(entry.get("side", "")).upper()
+    vol = _fp_value(entry.get("volume"))
+    if not sym or not side:
+        return None
+    for p in mt5_positions:
+        if normalize_symbol(p.get("symbol", "")) != sym:
+            continue
+        if mt5_position_side(p) != side:
+            continue
+        if _fp_value(p.get("volume")) != vol:
+            continue
+        return p
+    return None
+
+
 def _missing_grace_polls() -> int:
     return max(1, _env_int("MIRROR_MISSING_GRACE", 3))
 
@@ -200,9 +266,57 @@ def _cancel_orphan_capiffy(
         _log.error("Orphan cancel failed Capiffy %s: %s", cap_id, exc)
 
 
+def sync_positions(
+    state: dict[str, Any],
+    magic: int | None,
+    cap_positions: list[dict[str, Any]],
+) -> None:
+    if not _mirror_positions():
+        return
+    mt5_positions = get_positions(magic=magic)
+    tracked_pos: dict[str, Any] = state.setdefault("positions", {})
+    linked_cap_ids = {str(v.get("capiffy_id")) for v in tracked_pos.values() if v.get("capiffy_id")}
+    current: set[str] = set()
+
+    for p in mt5_positions:
+        pt = str(p["ticket"])
+        current.add(pt)
+        fp = position_fingerprint(p)
+        sl, tp = sl_tp_for_capiffy(p.get("sl"), p.get("tp"))
+        cap_sym = normalize_symbol(p.get("symbol", "")) or ""
+        side = mt5_position_side(p)
+
+        if pt not in tracked_pos:
+            cap_p = find_cap_position_for_mt5(p, cap_positions, linked_cap_ids)
+            if cap_p:
+                cid = str(cap_p["id"])
+                tracked_pos[pt] = {"capiffy_id": cid, "fingerprint": fp}
+                linked_cap_ids.add(cid)
+                _log.info("Linked MT5 position #%s · Capiffy position %s", pt, cid)
+            continue
+
+        entry = tracked_pos[pt]
+        cid = str(entry.get("capiffy_id", ""))
+        old_fp = entry.get("fingerprint") or []
+        if old_fp == fp or not cid:
+            continue
+        try:
+            modify_position(cid, stop_loss=sl, take_profit=tp)
+            notify_position_modify(cid, pt, cap_sym, side, list(old_fp), fp)
+            entry["fingerprint"] = fp
+            _log.info("Updated Capiffy position %s ← MT5 #%s SL/TP", cid, pt)
+        except Exception as exc:
+            _log.error("Position modify failed Capiffy %s (MT5 #%s): %s", cid, pt, exc)
+
+    for pt in list(tracked_pos.keys()):
+        if pt not in current:
+            del tracked_pos[pt]
+
+
 def sync_once(state: dict[str, Any]) -> dict[str, Any]:
     magic = _env_magic()
     mt5_orders = get_orders(magic=magic)
+    mt5_positions = get_positions(magic=magic) if _mirror_positions() else []
     mt5_by_ticket: dict[str, dict[str, Any]] = {}
     for o in mt5_orders:
         mapped = mt5_to_capiffy_side_type(o.get("type", ""))
@@ -215,15 +329,45 @@ def sync_once(state: dict[str, Any]) -> dict[str, Any]:
         mt5_by_ticket[str(o["ticket"])] = o
 
     cap_orders = get_open_orders()
+    cap_positions = get_open_positions() if _mirror_positions() else []
     cap_ids = {str(o.get("id")) for o in cap_orders if o.get("id")}
 
     tracked: dict[str, Any] = state.setdefault("orders", {})
     current = set(mt5_by_ticket.keys())
 
-    # Removed on MT5 → cancel Capiffy
+    # Removed on MT5 → filled into position, or cancel Capiffy pending
     for ticket, entry in list(tracked.items()):
         if ticket in current:
             continue
+        filled = mt5_pending_became_position(entry, mt5_positions) if _mirror_positions() else None
+        if filled is not None:
+            pos_ticket = str(filled["ticket"])
+            linked = state.setdefault("positions", {})
+            used = {str(v.get("capiffy_id")) for v in linked.values() if v.get("capiffy_id")}
+            cap_p = find_cap_position_for_mt5(filled, cap_positions, used)
+            if cap_p:
+                cid = str(cap_p["id"])
+                linked[pos_ticket] = {
+                    "capiffy_id": cid,
+                    "fingerprint": position_fingerprint(filled),
+                    "from_order": ticket,
+                }
+                _log.info(
+                    "MT5 pending #%s filled → position #%s · Capiffy position %s",
+                    ticket,
+                    pos_ticket,
+                    cid,
+                )
+                notify_position_linked(cid, pos_ticket, ticket)
+            else:
+                _log.warning(
+                    "MT5 pending #%s filled as #%s but no matching Capiffy position yet",
+                    ticket,
+                    pos_ticket,
+                )
+            del tracked[ticket]
+            continue
+
         cap_id = entry.get("capiffy_id")
         if cap_id and str(cap_id) in cap_ids:
             try:
@@ -248,7 +392,14 @@ def sync_once(state: dict[str, Any]) -> dict[str, Any]:
             matches = find_matching_capiffy_orders(o, cap_orders)
             if matches:
                 cap_id = str(matches[0]["id"])
-                tracked[ticket] = {"capiffy_id": cap_id, "fingerprint": fp, "missing_polls": 0}
+                tracked[ticket] = {
+                    "capiffy_id": cap_id,
+                    "fingerprint": fp,
+                    "missing_polls": 0,
+                    "cap_sym": cap_sym,
+                    "side": side,
+                    "volume": float(o["volume"]),
+                }
                 _log.info("Adopted existing Capiffy %s ← MT5 #%s (skip duplicate place)", cap_id, ticket)
                 for extra in matches[1:]:
                     _cancel_orphan_capiffy(str(extra["id"]), ticket, "duplicate match", cap_ids)
@@ -267,7 +418,14 @@ def sync_once(state: dict[str, Any]) -> dict[str, Any]:
                 if not cap_id:
                     _log.error("Place OK but no order id for MT5 #%s: %s", ticket, resp)
                     continue
-                tracked[ticket] = {"capiffy_id": cap_id, "fingerprint": fp, "missing_polls": 0}
+                tracked[ticket] = {
+                    "capiffy_id": cap_id,
+                    "fingerprint": fp,
+                    "missing_polls": 0,
+                    "cap_sym": cap_sym,
+                    "side": side,
+                    "volume": float(o["volume"]),
+                }
                 _log.info(
                     "Placed Capiffy %s ← MT5 #%s %s %s %s @ %s",
                     cap_id,
@@ -367,9 +525,12 @@ def sync_once(state: dict[str, Any]) -> dict[str, Any]:
             if cid != keep_id:
                 _cancel_orphan_capiffy(cid, ticket, "duplicate match", cap_ids)
 
+    sync_positions(state, magic, cap_positions)
+
     state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     state["mt5_count"] = len(mt5_by_ticket)
     state["tracked_count"] = len(tracked)
+    state["position_count"] = len(state.get("positions", {}))
     save_state(state)
     return state
 
@@ -385,9 +546,10 @@ def main() -> None:
 
     poll = _env_int("MIRROR_POLL_SEC", 5)
     _log.info(
-        "MT5→Capiffy automator · poll=%ss · magic=%s · state=%s",
+        "MT5→Capiffy automator · poll=%ss · magic=%s · positions=%s · state=%s",
         poll,
         _env_magic() if _env_magic() is not None else "all",
+        "on" if _mirror_positions() else "off",
         STATE_FILE.name,
     )
 
