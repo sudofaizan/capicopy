@@ -42,7 +42,10 @@ for f in automator.py capiffy_auth.py capiffy_client.py mt5_client.py run_automa
 done
 chmod +x "${INSTALL_DIR}/run_automator.sh" 2>/dev/null || true
 
-if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
+if [[ -f "${SCRIPT_DIR}/.env" ]] && grep -q CAPIFFY_REFRESH_TOKEN "${SCRIPT_DIR}/.env" 2>/dev/null; then
+  cp -f "${SCRIPT_DIR}/.env" "${INSTALL_DIR}/.env"
+  echo "    Copied configured .env from ${SCRIPT_DIR}"
+elif [[ ! -f "${INSTALL_DIR}/.env" ]]; then
   cp "${INSTALL_DIR}/.env.example" "${INSTALL_DIR}/.env"
   echo "    Created ${INSTALL_DIR}/.env — EDIT tokens before starting service."
 fi

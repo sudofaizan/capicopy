@@ -22,6 +22,10 @@ ssh ec2-user@YOUR_EC2_IP
 cd ~/capiffy_bridge
 sudo ./ec2-setup-amazon-linux.sh
 sudo nano /opt/capiffy-bridge/.env   # paste Capiffy tokens + MT5 URL
+# If you edited ~/capicopy/.env instead, copy it:
+sudo cp ~/capicopy/.env /opt/capiffy-bridge/.env
+sudo chmod 600 /opt/capiffy-bridge/.env
+sudo chown capiffy:capiffy /opt/capiffy-bridge/.env
 sudo systemctl start capiffy-mirror
 sudo journalctl -u capiffy-mirror -f
 ```
