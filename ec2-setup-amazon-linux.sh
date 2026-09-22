@@ -35,7 +35,7 @@ fi
 
 echo "==> Install files → ${INSTALL_DIR}"
 mkdir -p "${INSTALL_DIR}"
-for f in automator.py capiffy_auth.py capiffy_client.py mt5_client.py run_automator.sh .env.example; do
+for f in automator.py capiffy_auth.py capiffy_client.py mt5_client.py telegram_notify.py run_automator.sh .env.example telegram.env.example; do
   if [[ -f "${SCRIPT_DIR}/${f}" ]]; then
     cp -f "${SCRIPT_DIR}/${f}" "${INSTALL_DIR}/"
   fi

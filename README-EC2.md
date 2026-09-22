@@ -54,6 +54,25 @@ Copy from `.env.example`. Minimum:
 | `MT5_API_URL` | `http://13.42.76.172:8080` |
 | `MT5_API_KEY` | `alphafx` |
 
+### Telegram ([@cqpicopialpha](https://t.me/cqpicopialpha))
+
+```bash
+nano ~/telegram.env
+```
+
+```env
+TELEGRAM=YOUR_BOT_TOKEN
+TELEGRAM_CHAT_ID=@cqpicopialpha
+```
+
+Add to `/opt/capiffy-bridge/.env`:
+
+```env
+TELEGRAM_ENV_FILE=/home/ec2-user/telegram.env
+```
+
+Bot must be **admin** on the channel. Alerts: place, modify (price/SL/TP/vol), remove.
+
 Optional:
 
 - `MIRROR_MAGIC=202611` — only mirror orders with this magic (default: all pending).

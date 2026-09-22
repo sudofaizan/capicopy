@@ -10,6 +10,7 @@ User=capiffy
 Group=capiffy
 WorkingDirectory=/opt/capiffy-bridge
 EnvironmentFile=-/opt/capiffy-bridge/.env
+EnvironmentFile=-/home/ec2-user/telegram.env
 Environment=CAPIFFY_SSL_VERIFY=false
 Environment=MIRROR_POLL_SEC=5
 Environment=TOKEN_REFRESH_SEC=600

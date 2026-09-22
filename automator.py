@@ -31,6 +31,7 @@ from capiffy_client import (
     place_order,
 )
 from mt5_client import get_orders
+from telegram_notify import notify_modify, notify_place, notify_removed
 
 ROOT = Path(__file__).resolve().parent
 STATE_FILE = ROOT / "mirror_state.json"
@@ -194,6 +195,7 @@ def _cancel_orphan_capiffy(
         resp = cancel_order(cap_id)
         cap_ids.discard(cap_id)
         _log.info("Cancelled orphan Capiffy %s (%s · MT5 #%s): %s", cap_id, reason, ticket, resp)
+        notify_removed(str(cap_id), ticket, f"orphan cancel · {reason}")
     except Exception as exc:
         _log.error("Orphan cancel failed Capiffy %s: %s", cap_id, exc)
 
@@ -227,6 +229,7 @@ def sync_once(state: dict[str, Any]) -> dict[str, Any]:
             try:
                 resp = cancel_order(str(cap_id))
                 _log.info("Removed Capiffy order %s (MT5 #%s gone): %s", cap_id, ticket, resp)
+                notify_removed(str(cap_id), ticket, "MT5 pending removed → Capiffy cancelled")
             except Exception as exc:
                 _log.error("Cancel failed Capiffy %s (MT5 #%s): %s", cap_id, ticket, exc)
                 continue
@@ -274,6 +277,7 @@ def sync_once(state: dict[str, Any]) -> dict[str, Any]:
                     o["volume"],
                     o["price"],
                 )
+                notify_place(cap_id, ticket, o, cap_sym, side, order_type)
             except Exception as exc:
                 _log.error("Place failed MT5 #%s: %s", ticket, exc)
             continue
@@ -331,6 +335,16 @@ def sync_once(state: dict[str, Any]) -> dict[str, Any]:
                 take_profit=tp,
                 volume=float(o["volume"]),
             )
+            notify_modify(
+                cap_id,
+                ticket,
+                o,
+                cap_sym,
+                side,
+                order_type,
+                list(old_fp) if old_fp else [],
+                fp,
+            )
             entry["fingerprint"] = fp
             _log.info("Updated Capiffy %s ← MT5 #%s: %s", cap_id, ticket, resp)
         except Exception as exc:
@@ -383,6 +397,13 @@ def main() -> None:
     except Exception as exc:
         _log.error("Capiffy auth failed: %s", exc)
         raise SystemExit(1) from exc
+
+    from telegram_notify import enabled as tg_enabled
+
+    if tg_enabled():
+        _log.info("Telegram notify ON")
+    else:
+        _log.info("Telegram notify OFF (set ~/telegram.env or TELEGRAM_ENV_FILE)")
 
     def _stop(_sig=None, _frame=None) -> None:
         global _running
