@@ -29,6 +29,7 @@ from capiffy_client import (
     get_open_orders,
     get_open_positions,
     modify_order,
+    close_position,
     modify_position,
     place_order,
 )
@@ -36,6 +37,7 @@ from mt5_client import get_orders, get_positions
 from telegram_notify import (
     notify_modify,
     notify_place,
+    notify_position_closed,
     notify_position_linked,
     notify_position_modify,
     notify_removed,
@@ -308,8 +310,21 @@ def sync_positions(
         except Exception as exc:
             _log.error("Position modify failed Capiffy %s (MT5 #%s): %s", cid, pt, exc)
 
+    cap_pos_ids = {str(p.get("id")) for p in cap_positions if p.get("id")}
     for pt in list(tracked_pos.keys()):
         if pt not in current:
+            entry = tracked_pos[pt]
+            cid = str(entry.get("capiffy_id") or "")
+            if cid and cid in cap_pos_ids:
+                try:
+                    resp = close_position(cid)
+                    _log.info("Closed Capiffy position %s (MT5 #%s gone): %s", cid, pt, resp)
+                    notify_position_closed(cid, pt, "MT5 closed → Capiffy closed")
+                except Exception as exc:
+                    _log.error("Close failed Capiffy %s (MT5 #%s): %s", cid, pt, exc)
+                    continue
+            elif cid:
+                _log.info("MT5 position #%s gone · Capiffy %s already closed", pt, cid)
             del tracked_pos[pt]
 
 

@@ -173,6 +173,15 @@ def notify_position_modify(
     )
 
 
+def notify_position_closed(cap_id: str, mt5_ticket: str, reason: str = "MT5 position closed") -> None:
+    send_telegram(
+        "⏹ Capiffy POSITION CLOSED\n"
+        f"Capiffy {cap_id}\n"
+        f"MT5 position #{mt5_ticket}\n"
+        f"{reason}"
+    )
+
+
 def notify_position_linked(cap_id: str, mt5_ticket: str, from_order_ticket: str) -> None:
     send_telegram(
         "🔗 Order → Position\n"

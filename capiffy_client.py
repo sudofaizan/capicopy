@@ -84,6 +84,12 @@ def modify_position(
     return _request("PATCH", f"/api/trade/position/{position_id}", body)
 
 
+def close_position(position_id: str, account_id: str | None = None) -> dict[str, Any]:
+    """DELETE /api/trade/position/{positionId} — close open trade."""
+    _ = account_id
+    return _request("DELETE", f"/api/trade/position/{position_id}")
+
+
 def cancel_order(order_id: str, account_id: str | None = None) -> dict[str, Any]:
     """DELETE /api/trade/order/{orderId}"""
     _ = account_id  # account scoped by auth token
